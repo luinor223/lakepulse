@@ -82,6 +82,17 @@ logs: ## Show logs for all services
 logs-service: ## Show logs for specific service (usage: make logs-service SERVICE=postgres)
 	@docker compose logs -f $(SERVICE)
 
+services-info: ## Show all service URLs and credentials
+	@echo "$(CYAN)LakePulse Services:$(RESET)"
+	@echo "• PostgreSQL:     localhost:5432 (user/password)"
+	@echo "• MinIO API:      localhost:9000 (minio/minio123)"
+	@echo "• MinIO Console:  localhost:9001 (minio/minio123)"
+	@echo "• Airflow:        localhost:8080 (admin/admin)"
+	@echo "• Spark UI:       localhost:4040"
+	@echo "• Trino:          localhost:8081 (admin/no password)"
+	@echo "• Jupyter:        localhost:8888 (use token from logs)"
+	@echo "• Kafka:          localhost:9092"
+
 ## =================================================================
 ##@ Database Operations
 ## =================================================================
@@ -126,13 +137,14 @@ verify-data: ## Verify loaded data
 db-shell: ## Connect to database shell
 	@docker exec -it $$(docker compose ps -q postgres) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
 
-services-info: ## Show all service URLs and credentials
-	@echo "$(CYAN)LakePulse Services:$(RESET)"
-	@echo "• PostgreSQL:     localhost:5432 (user/password)"
-	@echo "• MinIO API:      localhost:9000 (minio/minio123)"
-	@echo "• MinIO Console:  localhost:9001 (minio/minio123)"
-	@echo "• Airflow:        localhost:8080 (admin/admin)"
-	@echo "• Spark UI:       localhost:4040"
-	@echo "• Trino:          localhost:8081 (admin/no password)"
-	@echo "• Jupyter:        localhost:8888 (use token from logs)"
-	@echo "• Kafka:          localhost:9092"
+## =================================================================
+##@ Spark Operations
+## =================================================================
+spark-shell: ## Connect to Spark master shell
+	@docker exec -it $$(docker compose ps -q spark-master) /bin/bash
+	spark-shell --master spark://$(SPARK_MASTER_HOST):7077
+
+spark-submit: ## Submit a Spark job (usage: make spark-submit JOB=your_job.py)
+	@echo "$(GREEN)Submitting Spark job: $(JOB)$(RESET)"
+	@docker exec -it $$(docker compose ps -q spark-master) \
+		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 /app/$(JOB)

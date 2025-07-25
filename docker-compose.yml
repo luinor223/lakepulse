@@ -1,0 +1,106 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: lakepulse-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    env_file:
+      - .env
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data:/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d/
+    networks:
+      - lakepulse_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+  minio:
+    image: minio/minio:latest
+    container_name: lakepulse-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    env_file:
+      - .env
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - lakepulse_network
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+  spark-master:
+    build:
+      context: ./docker/spark
+      dockerfile: Dockerfile
+    container_name: lakepulse-spark-master
+    environment:
+      - SPARK_MODE=spark-master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=${SPARK_USER}
+    expose:
+      - "${SPARK_MASTER_PORT:-7077}"
+    ports:
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+      - "${SPARK_MASTER_WEB_UI_PORT:-8080}:8080"
+    volumes:
+      - ./docker/spark/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+    env_file:
+      - .env
+    networks:
+      - lakepulse_network
+    restart: unless-stopped
+  spark-worker:
+    build:
+      context: ./docker/spark
+      dockerfile: Dockerfile
+    container_name: lakepulse-spark-worker
+    environment:
+      - SPARK_MODE=spark-worker
+      - SPARK_MASTER_URL=spark://spark-master:${SPARK_MASTER_PORT:-7077}
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-1g}
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-1}
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=${SPARK_USER}
+    ports:
+      - "${SPARK_WORKER_WEB_UI_PORT:-8081}:8081"
+    volumes:
+      - ./spark_jobs:/opt/bitnami/spark/jobs
+      - ./data:/opt/bitnami/spark/data
+    env_file:
+      - .env
+    depends_on:
+      - spark-master
+    networks:
+      - lakepulse_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  lakepulse_network:
+    driver: bridge

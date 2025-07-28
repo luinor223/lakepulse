@@ -204,3 +204,5 @@ init-scripts/
 
 # Database dumps
 *.dump
+
+airflow/logs/

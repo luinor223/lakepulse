@@ -227,5 +227,5 @@ spark-shell: ## Connect to Spark master shell
 
 spark-submit: ## Submit a Spark job (usage: make spark-submit JOB=your_job.py)
 	@echo "$(GREEN)Submitting Spark job: $(JOB)$(RESET)"
-	@docker exec -it $$(docker compose ps -q spark-master) \
-		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 /app/$(JOB)
+	@docker exec -it lakepulse-spark-master \
+		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 /opt/bitnami/spark/jobs/$(JOB)

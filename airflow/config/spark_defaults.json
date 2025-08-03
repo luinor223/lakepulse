@@ -1,0 +1,23 @@
+{
+  "spark_config": {
+    "spark.sql.extensions": "io.delta.sql.DeltaSparkSessionExtension",
+    "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.access.key": "minio",
+    "spark.hadoop.fs.s3a.secret.key": "minio123",
+    "spark.sql.adaptive.enabled": "true",
+    "spark.sql.adaptive.coalescePartitions.enabled": "true",
+    "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+    "spark.sql.warehouse.dir": "s3a://lakepulse-dev/warehouse/",
+    "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+  },
+  "spark_resources": {
+    "executor_cores": 2,
+    "executor_memory": "2g",
+    "driver_memory": "1g",
+    "num_executors": 2
+  },
+  "spark_jars": "/opt/spark/jars/postgresql-42.7.7.jar,/opt/spark/jars/delta-spark_2.12-3.0.0.jar,/opt/spark/jars/delta-storage-3.0.0.jar,/opt/spark/jars/aws-java-sdk-bundle-1.12.367.jar,/opt/spark/jars/hadoop-aws-3.3.4.jar"
+}

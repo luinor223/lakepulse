@@ -177,7 +177,7 @@ trigger-dag: ## Trigger a DAG (usage: make trigger-dag DAG=bronze_bootstrap_load
 
 airflow-refresh-dags: ## Refresh Airflow DAG cache
 	@echo "$(GREEN)Refreshing Airflow DAGs...$(RESET)"
-	@docker exec lakepulse-airflow-scheduler airflow dags reserialize
+	@docker exec lakepulse-airflow-1 airflow dags reserialize
 	@echo "$(GREEN)✓ DAGs refreshed$(RESET)"
 
 airflow-reset: ## Reset Airflow completely
@@ -228,4 +228,6 @@ spark-shell: ## Connect to Spark master shell
 spark-submit: ## Submit a Spark job (usage: make spark-submit JOB=your_job.py)
 	@echo "$(GREEN)Submitting Spark job: $(JOB)$(RESET)"
 	@docker exec -it lakepulse-spark-master \
-		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 /opt/bitnami/spark/jobs/$(JOB)
+		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 \
+		--conf spark.jars.ivy=/tmp/.ivy \
+		/opt/spark_jobs/$(JOB)

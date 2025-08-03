@@ -201,8 +201,11 @@ __marimo__/
 
 TODO_LIST.md
 init-scripts/
+DATA_PLAN.md
 
 # Database dumps
 *.dump
 
 airflow/logs/
+
+test.*

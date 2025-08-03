@@ -1,14 +1,14 @@
 # Airflow Providers for external systems
-apache-airflow-providers-postgres==5.7.0
 apache-airflow-providers-celery==3.12.1
-apache-airflow-providers-amazon==9.10.0
-apache-airflow-providers-apache-spark==5.3.1
+apache-airflow-providers-apache-spark==4.10.0
+apache-airflow-providers-discord==3.10.2
+
 
 # Database connectivity (for Airflow metadata and connections)
 psycopg2-binary==2.9.7
 asyncpg==0.29.0
 
 # Additional utilities
-requests==2.31.0
+requests==2.32.4
 graphviz==0.21
 Flask-AppBuilder==4.8.0

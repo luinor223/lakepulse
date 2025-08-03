@@ -54,11 +54,15 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     volumes:
+      - ./airflow/config:/opt/airflow/config
+      - ./airflow/plugins:/opt/airflow/plugins
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./spark_jobs:/opt/spark_jobs
-      - airflow-db-volume:/opt/airflow/airflow.db
+      - spark-jars-volume:/opt/spark/jars
+      - airflow-db-volume:/opt/airflow
     networks:
       - lakepulse_network
     ports:
@@ -75,16 +79,20 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
-      - SPARK_USER=${SPARK_USER}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
     expose:
       - "${SPARK_MASTER_PORT:-7077}"
+      - "6066"
     ports:
       - "${SPARK_MASTER_PORT:-7077}:7077"
       - "${SPARK_MASTER_WEB_UI_PORT:-8080}:8080"
+      - "6066:6066"
     volumes:
       - ./docker/spark/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
       - ./spark_jobs:/opt/spark_jobs
       - ./data:/opt/bitnami/spark/data
+      - spark-jars-volume:/opt/bitnami/spark/jars
     env_file:
       - .env
     networks:
@@ -102,7 +110,8 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
-      - SPARK_USER=${SPARK_USER}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
     ports:
       - "${SPARK_WORKER_WEB_UI_PORT:-8081}:8081"
     env_file:
@@ -117,6 +126,7 @@ volumes:
   oltp-db-volume:
   minio-volume:
   airflow-db-volume:
+  spark-jars-volume:
 
 networks:
   lakepulse_network:

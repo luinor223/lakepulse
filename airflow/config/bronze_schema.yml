@@ -1,47 +1,47 @@
 tables:
   - name: application.cities
     partition_by: ""
-  # - name: application.state_provinces
-  #   partition_by: ""
-  # - name: application.countries
-  #   partition_by: ""
-  # - name: application.people
-  #   partition_by: "ingestion_date"
-  # - name: application.payment_methods
-  #   partition_by: ""
-  # - name: application.transaction_types
-  #   partition_by: ""
-  # - name: purchasing.suppliers
-  #   partition_by: ""
-  # - name: purchasing.supplier_categories
-  #   partition_by: ""
-  # - name: purchasing.purchase_order_lines
-  #   partition_by: "ingestion_date"
-  # - name: purchasing.supplier_transactions
-  #   partition_by: ""
-  # - name: sales.orders
-  #   partition_by: "ingestion_date"
-  # - name: sales.order_lines
-  #   partition_by: "ingestion_date"
-  # - name: sales.invoices
-  #   partition_by: "ingestion_date"
-  # - name: sales.invoice_lines
-  #   partition_by: "ingestion_date"
-  # - name: sales.customer_transactions
-  #   partition_by: "ingestion_date"
-  # - name: sales.customers
-  #   partition_by: "ingestion_date"
-  # - name: sales.buying_groups
-  #   partition_by: ""
-  # - name: sales.customer_categories
-  #   partition_by: ""
-  # - name: warehouse.stock_items
-  #   partition_by: "ingestion_date"
-  # - name: warehouse.colors
-  #   partition_by: ""
-  # - name: warehouse.package_types
-  #   partition_by: ""
-  # - name: warehouse.stock_item_transactions
-  #   partition_by: "ingestion_date"
-  # - name: warehouse.stock_item_holdings
-  #   partition_by: "ingestion_date"
+  - name: application.state_provinces
+    partition_by: ""
+  - name: application.countries
+    partition_by: ""
+  - name: application.people
+    partition_by: "ingestion_date"
+  - name: application.payment_methods
+    partition_by: ""
+  - name: application.transaction_types
+    partition_by: ""
+  - name: purchasing.suppliers
+    partition_by: ""
+  - name: purchasing.supplier_categories
+    partition_by: ""
+  - name: purchasing.purchase_order_lines
+    partition_by: "ingestion_date"
+  - name: purchasing.supplier_transactions
+    partition_by: ""
+  - name: sales.orders
+    partition_by: "ingestion_date"
+  - name: sales.order_lines
+    partition_by: "ingestion_date"
+  - name: sales.invoices
+    partition_by: "ingestion_date"
+  - name: sales.invoice_lines
+    partition_by: "ingestion_date"
+  - name: sales.customer_transactions
+    partition_by: "ingestion_date"
+  - name: sales.customers
+    partition_by: "ingestion_date"
+  - name: sales.buying_groups
+    partition_by: ""
+  - name: sales.customer_categories
+    partition_by: ""
+  - name: warehouse.stock_items
+    partition_by: "ingestion_date"
+  - name: warehouse.colors
+    partition_by: ""
+  - name: warehouse.package_types
+    partition_by: ""
+  - name: warehouse.stock_item_transactions
+    partition_by: "ingestion_date"
+  - name: warehouse.stock_item_holdings
+    partition_by: "ingestion_date"

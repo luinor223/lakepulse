@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 from airflow import DAG
+from airflow.utils.task_group import TaskGroup
 from airflow.operators.bash import BashOperator #type: ignore
+from airflow.models.baseoperator import chain
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator #type: ignore
 from airflow.models import Variable
 import os
@@ -57,6 +59,7 @@ dag = DAG(
     schedule=timedelta(days=1),
     catchup=False,
     tags=['lakepulse', 'bronze', 'bootstrap'],
+    max_active_tasks=1,
     on_failure_callback=task_failure_alert
 )
 
@@ -119,17 +122,39 @@ def create_spark_task(table_name: str, partition_by: str) -> SparkSubmitOperator
         dag=dag,
     )
 
+def create_bronze_load_tasks():
+    """Create tasks for loading bronze tables based on configuration"""
+    config = load_bronze_config()
+    TABLES = config.get('tables', [])
+    
+    if not TABLES:
+        raise ValueError("No tables found in bronze_tables.yml configuration")
+    
+    grouped_tasks = {}
+    
+    for t in TABLES:
+        full_name = t["name"]
+        schema, table = full_name.split(".")
+        partition_by = t.get("partition_by", "")
+        
+        if schema not in grouped_tasks:
+            grouped_tasks[schema] = []
+        
+        grouped_tasks[schema].append((table, partition_by))
+    
+    table_tasks = []
+    
+    for schema, tables in grouped_tasks.items():
+        with TaskGroup(group_id=f"bronze_load_{schema}", dag=dag) as schema_group:
+            for table_name, partition_by in tables:
+                full_table = f"{schema}.{table_name}"
+                task = create_spark_task(full_table, partition_by)
+        table_tasks.append(schema_group)
+    
+    return table_tasks
+
 # Create tasks for each table
-config = load_bronze_config()
-TABLES = config.get('tables', [])
-if not TABLES:
-    raise ValueError("No tables found in bronze_tables.yml configuration")
+bronze_load_tasks = create_bronze_load_tasks()
+chain(*bronze_load_tasks)
 
-table_tasks = []
-for t in TABLES:
-    table = t['name']
-    partition_by = t.get('partition_by', "")
-    task = create_spark_task(table, partition_by)
-    table_tasks.append(task)
-
-spark_health_check >> minio_health_check >> table_tasks #type: ignore
+spark_health_check >> minio_health_check >> bronze_load_tasks[0] #type: ignore

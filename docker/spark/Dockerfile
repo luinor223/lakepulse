@@ -1,5 +1,11 @@
 FROM bitnami/spark:4.0.0-debian-12-r3
 
+LABEL org.opencontainers.image.source=https://github.com/luinor223/lakepulse
+LABEL org.opencontainers.image.description="Apache Spark with Delta Lake and S3 support for LakePulse data platform"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.authors="luinor223"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 USER root
 
 # Install prerequisites

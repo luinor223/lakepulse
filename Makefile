@@ -21,13 +21,6 @@ POSTGRES_PASSWORD := $(or $(POSTGRES_PASSWORD),password)
 # MinIO Configuration
 MINIO_ROOT_USER := $(or $(MINIO_ROOT_USER),minio)
 MINIO_ROOT_PASSWORD := $(or $(MINIO_ROOT_PASSWORD),minio123)
-BRONZE_BUCKET := $(or $(BRONZE_BUCKET),lakepulse-bronze)
-SILVER_BUCKET := $(or $(SILVER_BUCKET),lakepulse-silver)
-GOLD_BUCKET := $(or $(GOLD_BUCKET),lakepulse-gold)
-
-# Kafka Configuration
-KAFKA_BROKER_HOST := $(or $(KAFKA_BROKER_HOST),kafka)
-KAFKA_BROKER_PORT := $(or $(KAFKA_BROKER_PORT),9092)
 
 # Spark Configuration
 SPARK_MASTER_HOST := $(or $(SPARK_MASTER_HOST),spark-master)
@@ -45,6 +38,14 @@ help: ## Show this help message
 ## =================================================================
 ##@ Service Management
 ## =================================================================
+
+init: ## Initialize the project
+	@echo "$(GREEN)Downloading dependencies...$(RESET)"
+	@wget ./docker/kafka/plugins https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.2.0.Final/debezium-connector-postgres-3.2.0.Final-plugin.tar.gz
+	@echo "$(GREEN)Initializing LakePulse project...$(RESET)"
+	@docker compose pull
+	@echo "$(GREEN)✓ Project initialized$(RESET)"
+	@$(MAKE) build-all
 
 start: ## Start all services
 	@echo "$(GREEN)Starting LakePulse services...$(RESET)"
@@ -86,6 +87,7 @@ build-all: ## Build all custom images
 	@echo "$(GREEN)Building all images...$(RESET)"
 	@$(MAKE) build-spark
 	@$(MAKE) build-airflow
+	@$(MAKE) build-kafka-connect
 	@echo "$(GREEN)✓ All images built$(RESET)"
 
 build-spark: ## Build Spark image
@@ -97,6 +99,11 @@ build-airflow: ## Build Airflow image
 	@echo "$(GREEN)Building Airflow image...$(RESET)"
 	@docker build -t lakepulse/airflow:latest docker/airflow/
 	@echo "$(GREEN)✓ Airflow image built$(RESET)"
+
+build-kafka-connect: ## Build Kafka Connect image
+	@echo "$(GREEN)Building Kafka Connect image...$(RESET)"
+	@docker build -t lakepulse/kafka-connect:latest docker/kafka-connect/
+	@echo "$(GREEN)✓ Kafka Connect image built$(RESET)"
 
 services-info: ## Show all service URLs and credentials
 	@echo "$(CYAN)LakePulse Services:$(RESET)"
@@ -119,7 +126,7 @@ start-postgres: ## Start only PostgreSQL service
 	@sleep 5
 
 load-sample-data: ## Load sample data into PostgreSQL
-	@if [ ! -f data/wide_world_importers_pg.dump ]; then \
+	@if [ ! -f data/oltp/wide_world_importers_pg.dump ]; then \
         echo "$(YELLOW)Sample data dump not found, please check data/README.md to download it.$(RESET)"; \
         exit 1; \
     fi
@@ -132,11 +139,22 @@ load-sample-data: ## Load sample data into PostgreSQL
 		--clean \
 		--no-acl \
 		--no-owner \
-		/data/wide_world_importers_pg.dump 2>&1 | grep -v "already exists\|does not exist"; then \
+		/data/oltp/wide_world_importers_pg.dump 2>&1 | grep -v "already exists\|does not exist"; then \
 		echo "$(GREEN)✓ Sample data loaded successfully$(RESET)"; \
 	else \
 		echo "$(YELLOW)Database may already be loaded or restore completed with warnings$(RESET)"; \
 	fi
+	@$(MAKE) grant-permissions
+
+grant-permissions: ## Grant permissions to debezium user
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT USAGE ON SCHEMA application TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT USAGE ON SCHEMA purchasing TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT USAGE ON SCHEMA sales TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT USAGE ON SCHEMA warehouse TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT SELECT ON ALL TABLES IN SCHEMA application TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT SELECT ON ALL TABLES IN SCHEMA purchasing TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT SELECT ON ALL TABLES IN SCHEMA sales TO debezium;"
+	@docker exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "GRANT SELECT ON ALL TABLES IN SCHEMA warehouse TO debezium;"
 
 test-db-connection: ## Test database connectivity
 	@echo "$(GREEN)Testing database connection...$(RESET)"
@@ -231,3 +249,25 @@ spark-submit: ## Submit a Spark job (usage: make spark-submit JOB=your_job.py)
 		spark-submit --master spark://$(SPARK_MASTER_HOST):7077 \
 		--conf spark.jars.ivy=/tmp/.ivy \
 		/opt/spark_jobs/$(JOB)
+
+
+## =================================================================
+##@ Kafka Operations
+## =================================================================
+start-kafka: ## Start Kafka service
+	@echo "$(GREEN)Starting Kafka service...$(RESET)"
+	@docker compose up -d broker schema-registry kafka-connect kafka-ui
+	@echo "$(GREEN)Waiting for Kafka to be ready...$(RESET)"
+	@sleep 10  # Wait for Kafka to initialize
+	@echo "$(GREEN)✓ Kafka service started$(RESET)"
+
+register-connector: ## Register a Kafka connector (usage: make register-connector CONNECTOR=your_connector.json)
+	@if [ -z "$(CONNECTOR)" ]; then \
+		echo "$(RED)Please specify a connector file: make register-connector CONNECTOR=your_connector.json$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Registering connector: $(CONNECTOR)$(RESET)"
+	@curl -X POST \
+	  http://localhost:8083/connectors \
+	  -H 'Content-Type: application/json' \
+	  -d @kafka/connectors/$(CONNECTOR)

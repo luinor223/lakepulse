@@ -1,12 +1,14 @@
-# LakePulse Architecture 🏗️
+# LakePulse Architecture
 
 > Comprehensive architectural overview of the LakePulse data lakehouse platform
 
-## 🎯 Architecture Overview
+**Note: This project is still in development! The documentation here reflects the estimated design.**
+
+## Architecture Overview
 
 LakePulse implements a modern **medallion architecture** (Bronze-Silver-Gold) combined with **real-time streaming** and **batch processing** capabilities. The platform is designed to be **cloud-native**, **horizontally scalable**, and **production-ready** while remaining **fully local** for development and learning.
 
-## 🏛️ High-Level Architecture
+## High-Level Architecture
 
 ```mermaid
 graph TB
@@ -80,7 +82,7 @@ graph TB
     TRINO --> METRICS
 ```
 
-## 🏗️ System Components
+## System Components
 
 ### 1. Data Sources Layer
 
@@ -101,19 +103,39 @@ graph TB
 ### 2. Ingestion Layer
 
 #### Change Data Capture (CDC) Simulation
-```python
-# CDC Event Structure
+```json
+// CDC Event Structure
 {
-    "operation": "INSERT|UPDATE|DELETE",
-    "table": "sales.customers",
-    "timestamp": "2024-07-25T10:30:00Z",
-    "before": {...},  # For UPDATE/DELETE
-    "after": {...},   # For INSERT/UPDATE
-    "metadata": {
-        "source": "postgres",
-        "transaction_id": "12345",
-        "lsn": "0/1234ABCD"
-    }
+  "before": {
+    "id": 1,
+    "name": "Alice",
+    "email": "alice@example.com"
+  },
+  "after": {
+    "id": 1,
+    "name": "Alice Smith",
+    "email": "alice.smith@example.com"
+  },
+  "source": {
+    "version": "2.4.1.Final",
+    "connector": "postgresql",
+    "name": "dbserver1",
+    "ts_ms": 1723059919230,
+    "snapshot": "false",
+    "db": "users_db",
+    "schema": "public",
+    "table": "users",
+    "txId": 4785,
+    "lsn": 24152160,
+    ...
+  },
+  "op": "u",  // Operation: c (create), u (update), d (delete), r (read snapshot)
+  "ts_ms": 1723059919232,  // Timestamp of event
+  "transaction": {
+    "id": "abcd-1234",
+    "total_order": 2,
+    "data_collection_order": 1
+  }
 }
 ```
 
@@ -144,7 +166,7 @@ Spark Master:
   - Memory: 2GB
   - Role: Cluster coordination
 
-Spark Workers (2x):
+Spark Workers (1x - my laptop cannot handle 2+):
   - Cores: 2 each
   - Memory: 4GB each
   - Role: Task execution
@@ -152,7 +174,7 @@ Spark Workers (2x):
 
 #### Processing Patterns
 
-**Structured Streaming** (Real-time):
+**Structured Streaming** (Consume Kafka CDC in near realtime. Currently I'm having performance issues with this):
 ```python
 # Kafka to Bronze streaming
 stream = spark.readStream \
@@ -183,15 +205,14 @@ cleaned_df.write.format("delta").mode("overwrite").table("silver.customers")
 lakepulse-bronze/
 ├── customers/
 │   ├── year=2024/month=07/day=25/
-│   │   ├── part-001.parquet
-│   │   └── _delta_log/
+│   │   ├── part-001.snappy.parquet
 ├── orders/
 └── products/
 
 lakepulse-silver/
 ├── customers/
 │   ├── year=2024/month=07/
-│   │   ├── part-001.parquet
+│   │   ├── part-001.snappy.parquet
 │   │   └── _delta_log/
 
 lakepulse-gold/
@@ -345,7 +366,7 @@ def clean_customer_data(df):
 
 ### 3. Gold Layer (Business-Ready Analytics)
 
-**Objective**: Create optimized, business-focused datasets
+**Objective**: Create optimized, business-focused datasets using Kimball Modeling
 
 **Process Flow**:
 1. **Read Silver** → Validated data
@@ -355,23 +376,8 @@ def clean_customer_data(df):
 
 **Business Entities**:
 ```sql
--- Customer Analytics
-CREATE TABLE gold.customer_analytics AS
-SELECT 
-    customer_id,
-    customer_name,
-    customer_segment,
-    total_orders,
-    total_revenue,
-    avg_order_value,
-    last_order_date,
-    customer_lifetime_value,
-    churn_probability
-FROM silver.customers c
-JOIN silver.order_aggregates o ON c.customer_id = o.customer_id;
-
 -- Sales Metrics
-CREATE TABLE gold.daily_sales_metrics AS
+CREATE TABLE gold.fact_sales AS
 SELECT 
     order_date,
     region,
@@ -384,149 +390,8 @@ FROM silver.orders
 GROUP BY order_date, region, product_category;
 ```
 
-## 🚀 Scalability & Performance
 
-### Horizontal Scaling Strategy
-
-#### Spark Scaling
-```yaml
-Auto-scaling Configuration:
-  Min Workers: 2
-  Max Workers: 10
-  Scale-up Threshold: CPU > 80% for 5 minutes
-  Scale-down Threshold: CPU < 30% for 10 minutes
-  
-Resource Allocation:
-  Driver: 2 cores, 4GB RAM
-  Executor: 2 cores, 4GB RAM
-  Max Executors: 20
-```
-
-#### Kafka Scaling
-```yaml
-Topic Configuration:
-  Partitions: 6 (2x worker count)
-  Replication Factor: 3
-  Min In-Sync Replicas: 2
-  
-Consumer Configuration:
-  Consumer Groups: By processing layer
-  Max Poll Records: 1000
-  Session Timeout: 30s
-```
-
-### Performance Optimization
-
-#### Data Layout Optimization
-```python
-# Z-ordering for query performance
-df.write \
-  .format("delta") \
-  .option("dataChange", "false") \
-  .mode("overwrite") \
-  .option("optimizeWrite", "true") \
-  .option("zorderBy", "customer_id,order_date") \
-  .table("silver.orders")
-
-# Liquid clustering (upcoming feature)
-spark.sql("""
-    CREATE TABLE gold.customer_analytics
-    USING DELTA
-    CLUSTER BY (customer_segment, region)
-    AS SELECT * FROM silver.customers
-""")
-```
-
-#### Query Performance
-```sql
--- Optimized query patterns
-SELECT 
-    customer_segment,
-    COUNT(*) as customer_count,
-    AVG(total_revenue) as avg_revenue
-FROM gold.customer_analytics
-WHERE last_order_date >= current_date() - interval '90' day
-GROUP BY customer_segment;
-```
-
-### Caching Strategy
-```python
-# Strategic caching for frequently accessed data
-spark.sql("CACHE TABLE silver.customers")
-spark.sql("CACHE TABLE gold.customer_analytics")
-
-# Uncache when no longer needed
-spark.sql("UNCACHE TABLE silver.customers")
-```
-
-## 🔒 Security Architecture
-
-### Authentication & Authorization
-```yaml
-Service Authentication:
-  - Spark: LDAP integration
-  - Trino: Password authentication
-  - Airflow: OAuth2 / LDAP
-  - MinIO: IAM policies
-
-Data Access Control:
-  - Row-level security
-  - Column-level masking
-  - Dynamic data filtering
-  - Audit logging
-```
-
-### Network Security
-```yaml
-Container Network:
-  - Internal docker network
-  - Service-to-service communication
-  - No external exposure except web UIs
-  - TLS encryption for external access
-
-Secrets Management:
-  - Docker secrets
-  - Environment variable encryption
-  - Key rotation policies
-```
-
-## 📊 Data Governance
-
-### Data Lineage
-```python
-# Lineage tracking in processing jobs
-lineage_info = {
-    "job_id": "bronze_ingestion_customers",
-    "timestamp": datetime.now(),
-    "source_tables": ["postgres.sales.customers"],
-    "target_tables": ["bronze.customers"],
-    "transformation_type": "ingestion",
-    "data_quality_score": 0.95
-}
-```
-
-### Data Quality Framework
-```python
-# Quality rules configuration
-quality_rules = {
-    "completeness": {
-        "customer_id": {"threshold": 1.0},
-        "email": {"threshold": 0.8}
-    },
-    "uniqueness": {
-        "customer_id": {"threshold": 1.0}
-    },
-    "validity": {
-        "email": {"pattern": r"^[^@]+@[^@]+\.[^@]+$"},
-        "phone": {"pattern": r"^\d{10}$"}
-    },
-    "timeliness": {
-        "max_delay_minutes": 15
-    }
-}
-```
-
-## 🔧 DevOps & Infrastructure
+## DevOps & Infrastructure
 
 ### Container Orchestration
 ```yaml
@@ -535,14 +400,15 @@ services:
   postgres:          # Source database
   minio:             # Object storage
   kafka:             # Streaming platform
-  zookeeper:         # Kafka coordination
+  kafka-connector:   # Moving data into and out of Kafka 
+  schema-registry:   # Managing and storing schemas
+  kafka-ui:          # Kafka WebUI
   spark-master:      # Spark cluster head
-  spark-worker-1:    # Spark executor
-  spark-worker-2:    # Spark executor
-  airflow-webserver: # Workflow UI
-  airflow-scheduler: # Workflow engine
+  spark-worker:      # Spark executor
+  airflow:           # Airflow Standalone
   trino:             # Query engine
-  jupyter:           # Interactive analytics
+  prometheus:        # Monitoring: Metrics collection
+  grafana:           # Monitoring: Visualization
 ```
 
 ### Monitoring Stack
@@ -550,9 +416,6 @@ services:
 Monitoring Components:
   - Prometheus: Metrics collection
   - Grafana: Visualization
-  - AlertManager: Alert routing
-  - Jaeger: Distributed tracing
-  - ELK Stack: Log aggregation
 ```
 
 ### CI/CD Pipeline
@@ -567,7 +430,7 @@ Pipeline Stages:
   7. Performance Tests: Load testing
 ```
 
-## 🎯 Design Principles
+## Design Principles
 
 ### 1. **Modularity**
 - Loosely coupled components
@@ -602,26 +465,6 @@ Pipeline Stages:
 - Standardized patterns
 - Automated testing
 - Code quality gates
-
-## 📈 Future Enhancements
-
-### Short Term (Next Quarter)
-- [ ] Real-time ML feature serving
-- [ ] Advanced data quality monitoring
-- [ ] Cost optimization dashboards
-- [ ] Enhanced security controls
-
-### Medium Term (6 months)
-- [ ] Multi-region deployment
-- [ ] Advanced ML pipelines
-- [ ] Data mesh architecture
-- [ ] Real-time personalization
-
-### Long Term (1 year)
-- [ ] Kubernetes orchestration
-- [ ] Cloud-native deployment
-- [ ] Advanced governance tools
-- [ ] Industry-specific templates
 
 ---
 

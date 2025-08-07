@@ -100,8 +100,8 @@ def create_spark_task(table_name: str, partition_by: str) -> SparkSubmitOperator
         raise ValueError(f"Spark configuration variables not found: {e}") from e
     
     task_id = f"bronze_load_{table_name.replace('.', '_')}"
-    output_path = f"s3a://lakepulse-dev/bronze/{table_name.replace('.', '/')}"
-    
+    output_path = f"s3a://lakepulse-dev/bronze/{table_name.replace('.', '_')}/"
+
     return SparkSubmitOperator(
         task_id=task_id,
         application="/opt/spark_jobs/bronze/bronze_bootstrap_job.py",

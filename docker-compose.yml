@@ -3,7 +3,7 @@
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: lakepulse-oltp-postgres
+    container_name: postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -14,20 +14,25 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - oltp-db-volume:/var/lib/postgresql/data
-      - ./data:/data
-      - ./docker/postgres:/docker-entrypoint-initdb.d/
+      - ./data:/data:ro
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
       - lakepulse_network
+    command: >
+      postgres -c wal_level=logical
+              -c max_replication_slots=10
+              -c max_wal_senders=10
+              -c log_statement=all
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
     restart: unless-stopped
   minio:
     image: minio/minio:latest
-    container_name: lakepulse-minio
+    container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -56,6 +61,7 @@ services:
   airflow:
     build: ./docker/airflow
     image: lakepulse/airflow:latest
+    container_name: airflow
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
@@ -72,12 +78,11 @@ services:
     networks:
       - lakepulse_network
     ports:
-      - "8090:8080"
+      - "${AIRFLOW_WEBSERVER_PORT:-8090}:8080"
     command: standalone
-  
   spark-master:
     image: lakepulse/spark:latest
-    container_name: lakepulse-spark-master
+    container_name: spark-master
     environment:
       - SPARK_MODE=master
       - SPARK_LOCAL_IP=spark-master
@@ -88,12 +93,12 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
     expose:
-      - "${SPARK_MASTER_PORT:-7077}"
-      - "${SPARK_CONTEXT_UI_PORT:-4040}"
+      - "7077"
+      - "4040"
     ports:
-      - "${SPARK_MASTER_PORT:-7077}:7077"
+      - "7077:7077"
       - "${SPARK_MASTER_WEB_UI_PORT:-8080}:8080"
-      - "${SPARK_CONTEXT_UI_PORT:-4040}:4040"
+      - "4040:4040"
     volumes:
       - ./docker/spark/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
       - ./spark_jobs:/opt/spark_jobs
@@ -106,7 +111,7 @@ services:
     restart: unless-stopped
   spark-worker:
     image: lakepulse/spark:latest
-    container_name: lakepulse-spark-worker
+    container_name: spark-worker
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:${SPARK_MASTER_PORT:-7077}
@@ -127,6 +132,91 @@ services:
     networks:
       - lakepulse_network
     restart: unless-stopped
+  broker:
+    image: confluentinc/cp-kafka:8.0.0
+    hostname: broker
+    container_name: broker
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: ${KAFKA_SCHEMA_REGISTRY_URL}
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "${KAFKA_BOOTSTRAP_SERVERS}", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - lakepulse_network
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.0.0
+    container_name: schema-registry
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "8061:8061"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8061
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    networks:
+      - lakepulse_network
+  kafka-connect:
+    image: lakepulse/kafka-connect:latest
+    container_name: kafka-connect
+    depends_on:
+      - broker
+      - schema-registry
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: _kafka-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: _kafka-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: _kafka-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: ${KAFKA_SCHEMA_REGISTRY_URL}
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+    networks:
+      - lakepulse_network
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8070:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: ${KAFKA_SCHEMA_REGISTRY_URL}
+    networks:
+      - lakepulse_network
 
 volumes:
   oltp-db-volume:

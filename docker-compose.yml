@@ -14,8 +14,8 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - oltp-db-volume:/var/lib/postgresql/data
-      - ./data:/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./data:/data:ro
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
       - lakepulse_network
     command: >
@@ -28,7 +28,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
     restart: unless-stopped
   minio:
     image: minio/minio:latest
@@ -156,11 +156,11 @@ services:
       KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8061
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: ${KAFKA_SCHEMA_REGISTRY_URL}
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "broker:29092", "--list"]
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "${KAFKA_BOOTSTRAP_SERVERS}", "--list"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -178,7 +178,7 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8061
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
     networks:
       - lakepulse_network
   kafka-connect:
@@ -190,7 +190,7 @@ services:
     ports:
       - "8083:8083"
     environment:
-      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       CONNECT_REST_ADVERTISED_HOST_NAME: connect
       CONNECT_GROUP_ID: compose-connect-group
       CONNECT_CONFIG_STORAGE_TOPIC: _kafka-connect-configs
@@ -202,7 +202,7 @@ services:
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
-      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8061
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: ${KAFKA_SCHEMA_REGISTRY_URL}
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
     networks:
       - lakepulse_network
@@ -210,11 +210,11 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
-      - "8080:8080"
+      - "8070:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker:29092
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8061
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: ${KAFKA_SCHEMA_REGISTRY_URL}
     networks:
       - lakepulse_network
 

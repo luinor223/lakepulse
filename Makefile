@@ -193,13 +193,27 @@ start-kafka: ## Start Kafka service
 	@echo "$(GREEN)Starting Kafka service...$(RESET)"
 	@docker compose up -d broker schema-registry kafka-connect kafka-ui
 	@echo "$(GREEN)Waiting for Kafka to be ready...$(RESET)"
-	@sleep 10  # Wait for Kafka to initialize
+	@sleep 15  # Wait for Kafka to initialize
 	@echo "$(GREEN)✓ Kafka service started$(RESET)"
+	@$(MAKE) register-all-connectors
 
 stop-kafka: ## Stop Kafka service
 	@echo "$(YELLOW)Stopping Kafka service...$(RESET)"
 	@docker compose down broker schema-registry kafka-connect kafka-ui
 	@echo "$(GREEN)✓ Kafka service stopped$(RESET)"
+
+register-connector: ## Register a specific connector (usage: make register-connector CONNECTOR=bronze-s3-sink)
+	@if [ -z "$(CONNECTOR)" ]; then \
+		echo "$(RED)Please specify a connector: make register-connector CONNECTOR=bronze-s3-sink$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Registering connector: $(CONNECTOR)$(RESET)"
+	@curl -s -X POST \
+		http://localhost:8083/connectors \
+		-H 'Content-Type: application/json' \
+		-d @kafka/connectors/$(CONNECTOR).json | jq '.' || echo "$(RED)Failed to register $(CONNECTOR)$(RESET)"
+	@sleep 2
+	@echo "$(GREEN)✓ Connector registered$(RESET)"
 
 register-all-connectors: ## Register all connectors in kafka/connectors/ directory
 	@echo "$(GREEN)Registering all connectors...$(RESET)"
@@ -212,3 +226,113 @@ register-all-connectors: ## Register all connectors in kafka/connectors/ directo
 		sleep 2; \
 	done
 	@echo "$(GREEN)✓ All connectors registered$(RESET)"
+
+list-connectors: ## List all registered connectors
+	@echo "$(CYAN)Registered Connectors:$(RESET)"
+	@curl -s http://localhost:8083/connectors | jq '.[]' || echo "$(RED)No connectors found or Kafka Connect not available$(RESET)"
+
+check-connector-status: ## Check status of all connectors
+	@echo "$(CYAN)Connector Status:$(RESET)"
+	@for connector in $$(curl -s http://localhost:8083/connectors | jq -r '.[]' 2>/dev/null); do \
+		echo "$(GREEN)$$connector:$(RESET)"; \
+		curl -s http://localhost:8083/connectors/$$connector/status | jq '.connector.state, .tasks[].state' || echo "$(RED)Failed to get status$(RESET)"; \
+		echo ""; \
+	done
+
+check-connector: ## Check specific connector status (usage: make check-connector CONNECTOR=bronze-s3-sink)
+	@if [ -z "$(CONNECTOR)" ]; then \
+		echo "$(RED)Please specify a connector: make check-connector CONNECTOR=bronze-s3-sink$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(CYAN)Checking connector: $(CONNECTOR)$(RESET)"
+	@curl -s http://localhost:8083/connectors/$(CONNECTOR)/status | jq '.' || echo "$(RED)Connector not found$(RESET)"
+
+restart-connector: ## Restart a specific connector (usage: make restart-connector CONNECTOR=bronze-s3-sink)
+	@if [ -z "$(CONNECTOR)" ]; then \
+		echo "$(RED)Please specify a connector: make restart-connector CONNECTOR=bronze-s3-sink$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)Restarting connector: $(CONNECTOR)$(RESET)"
+	@curl -s -X POST http://localhost:8083/connectors/$(CONNECTOR)/restart
+	@echo "$(GREEN)✓ Connector restart initiated$(RESET)"
+
+delete-connector: ## Delete a specific connector (usage: make delete-connector CONNECTOR=bronze-s3-sink)
+	@if [ -z "$(CONNECTOR)" ]; then \
+		echo "$(RED)Please specify a connector: make delete-connector CONNECTOR=bronze-s3-sink$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)Deleting connector: $(CONNECTOR)$(RESET)"
+	@curl -s -X DELETE http://localhost:8083/connectors/$(CONNECTOR)
+	@echo "$(GREEN)✓ Connector deleted$(RESET)"
+
+kafka-connect-logs: ## View Kafka Connect logs
+	@echo "$(CYAN)Kafka Connect Logs:$(RESET)"
+	@docker logs kafka-connect --tail 50
+
+## =================================================================
+##@ CI/CD and Testing
+## =================================================================
+
+validate-configs: ## Validate all connector configurations
+	@echo "$(GREEN)Validating connector configurations...$(RESET)"
+	@for config in kafka/connectors/*.json; do \
+		echo "$(CYAN)Validating $$config$(RESET)"; \
+		python -m json.tool "$$config" > /dev/null && echo "$(GREEN)✓ Valid JSON$(RESET)" || echo "$(RED)✗ Invalid JSON$(RESET)"; \
+	done
+	@echo "$(GREEN)✓ Configuration validation complete$(RESET)"
+
+test-connectors: ## Test connector configurations without deploying
+	@echo "$(GREEN)Testing connector configurations...$(RESET)"
+	@echo "$(CYAN)Starting test environment...$(RESET)"
+	@docker compose up -d broker schema-registry kafka-connect
+	@echo "$(CYAN)Waiting for Kafka Connect to be ready...$(RESET)"
+	@timeout 60 bash -c 'until curl -f http://localhost:8083/; do sleep 2; done'
+	@echo "$(CYAN)Testing connector configurations...$(RESET)"
+	@for config in kafka/connectors/*.json; do \
+		connector_name=$$(basename "$$config" .json); \
+		connector_class=$$(jq -r '.config."connector.class"' "$$config"); \
+		echo "$(CYAN)Testing $$connector_name ($$connector_class)$(RESET)"; \
+		curl -s -X PUT "http://localhost:8083/connector-plugins/$$connector_class/config/validate" \
+			-H "Content-Type: application/json" \
+			-d @"$$config" | jq '.error_count' | \
+		(read errors; if [ "$$errors" -eq 0 ]; then echo "$(GREEN)✓ Valid$(RESET)"; else echo "$(RED)✗ $$errors errors$(RESET)"; fi); \
+	done
+	@docker compose down broker schema-registry kafka-connect
+	@echo "$(GREEN)✓ Connector testing complete$(RESET)"
+
+health-check: ## Run comprehensive health check
+	@echo "$(GREEN)Running health check...$(RESET)"
+	@$(MAKE) check-connector-status
+	@echo "$(CYAN)Checking consumer lag...$(RESET)"
+	@for topic in $$(docker exec $$(docker compose ps -q broker) kafka-topics --bootstrap-server localhost:9092 --list | grep -E "(customers|orders|products)"); do \
+		echo "$(CYAN)Topic: $$topic$(RESET)"; \
+		docker exec $$(docker compose ps -q broker) kafka-consumer-groups \
+			--bootstrap-server localhost:9092 \
+			--group connect-s3-sink \
+			--describe --topic $$topic 2>/dev/null || echo "$(YELLOW)No consumer group data$(RESET)"; \
+	done
+	@echo "$(GREEN)✓ Health check complete$(RESET)"
+
+ci-setup: ## Setup for CI environment
+	@echo "$(GREEN)Setting up CI environment...$(RESET)"
+	@$(MAKE) validate-configs
+	@$(MAKE) build-all
+	@echo "$(GREEN)✓ CI setup complete$(RESET)"
+
+ci-test: ## Run CI tests
+	@echo "$(GREEN)Running CI tests...$(RESET)"
+	@$(MAKE) test-connectors
+	@echo "$(GREEN)✓ CI tests complete$(RESET)"
+
+## =================================================================
+##@ Development
+## =================================================================
+
+dev-reset: ## Reset development environment (keeps configs)
+	@echo "$(YELLOW)Resetting development environment...$(RESET)"
+	@docker compose down
+	@docker compose up -d postgres broker schema-registry minio kafka-connect
+	@echo "$(GREEN)Waiting for services...$(RESET)"
+	@sleep 30
+	@$(MAKE) register-all-connectors
+	@echo "$(GREEN)✓ Development environment reset$(RESET)"

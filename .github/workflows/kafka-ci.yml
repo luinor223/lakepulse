@@ -1,3 +1,4 @@
+---
 name: Kafka CDC Pipeline CI
 
 permissions:
@@ -87,7 +88,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
+
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -173,11 +174,13 @@ jobs:
       - name: Start test services
         run: |
           # Update docker-compose to use test image
-          sed -i 's|lakepulse/kafka-connect:latest|${{ needs.build.outputs.image-tag }}|' docker-compose.yml
-          
+          IMAGE_TAG="${{ needs.build.outputs.image-tag }}"
+          sed -i "s|lakepulse/kafka-connect:latest|${IMAGE_TAG}|" \
+            docker-compose.yml
+
           # Start minimal services for testing
           docker compose --env-file .env.test up -d broker schema-registry minio
-          
+
           # Wait for services to be ready
           sleep 30
 
@@ -185,25 +188,34 @@ jobs:
         run: |
           # Start Kafka Connect with test image
           docker compose --env-file .env.test up -d kafka-connect
-          
+
           # Wait for Connect to start
-          timeout 120 bash -c 'until curl -f http://localhost:8083/; do sleep 5; done'
+          timeout 120 bash -c \
+            'until curl -f http://localhost:8083/; do sleep 5; done'
 
       - name: Validate connector plugins
         run: |
           # Check if required plugins are installed
-          curl -s http://localhost:8083/connector-plugins | jq '.[] | select(.class | contains("PostgresConnector"))'
-          curl -s http://localhost:8083/connector-plugins | jq '.[] | select(.class | contains("S3SinkConnector"))'
+          curl -s http://localhost:8083/connector-plugins | \
+            jq '.[] | select(.class | contains("PostgresConnector"))'
+          curl -s http://localhost:8083/connector-plugins | \
+            jq '.[] | select(.class | contains("S3SinkConnector"))'
 
       - name: Test connector configuration validation
         run: |
           # Test Postgres source connector config validation
-          curl -X PUT http://localhost:8083/connector-plugins/io.debezium.connector.postgresql.PostgresConnector/config/validate \
+          POSTGRES_URL="http://localhost:8083/connector-plugins"
+          POSTGRES_URL="${POSTGRES_URL}/io.debezium.connector.postgresql"
+          POSTGRES_URL="${POSTGRES_URL}.PostgresConnector/config/validate"
+          curl -X PUT "${POSTGRES_URL}" \
             -H "Content-Type: application/json" \
             -d @kafka/connectors/postgres-source.json | jq '.error_count'
-          
+
           # Test S3 sink connector config validation
-          curl -X PUT http://localhost:8083/connector-plugins/io.confluent.connect.s3.S3SinkConnector/config/validate \
+          S3_URL="http://localhost:8083/connector-plugins"
+          S3_URL="${S3_URL}/io.confluent.connect.s3"
+          S3_URL="${S3_URL}.S3SinkConnector/config/validate"
+          curl -X PUT "${S3_URL}" \
             -H "Content-Type: application/json" \
             -d @kafka/connectors/s3-sink.json | jq '.error_count'
 

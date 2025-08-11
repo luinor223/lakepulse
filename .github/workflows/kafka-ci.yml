@@ -1,0 +1,208 @@
+---
+name: Kafka CDC Pipeline CI
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+on:
+  push:
+    branches:
+      - main
+      - feature/kafka-cdc
+    paths:
+      - 'docker/kafka-connect/**'
+      - 'kafka/connectors/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/kafka-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docker/kafka-connect/**'
+      - 'kafka/connectors/**'
+      - 'docker-compose.yml'
+
+env:
+  PROJECT_NAME: lakepulse
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/lakepulse-kafka-connect
+
+jobs:
+  lint:
+    name: Lint Configuration Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .env file
+        run: cp .env.example .env
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML files
+        run: |
+          yamllint docker-compose.yml
+          yamllint .github/workflows/
+
+      - name: Validate JSON connector configs
+        run: |
+          for file in kafka/connectors/*.json; do
+            echo "Validating $file"
+            python -m json.tool "$file" > /dev/null
+          done
+
+      - name: Check Docker Compose syntax
+        run: docker compose config
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  build:
+    name: Build Kafka Connect Image
+    runs-on: ubuntu-latest
+    needs: [lint]
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/kafka-connect
+          file: ./docker/kafka-connect/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create test environment file
+        run: |
+          cp .env.example .env
+
+      - name: Start test services
+        run: |
+          # Update docker-compose to use test image (use first tag only)
+          IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tag }}" | head -n1)
+          sed -i "s|lakepulse/kafka-connect:latest|${IMAGE_TAG}|" \
+           docker-compose.yml
+
+          # Start minimal services for testing
+          docker compose --env-file .env up -d postgres broker \
+            schema-registry minio
+
+          # Wait for services to be ready
+          sleep 30
+
+      - name: Test Kafka Connect image
+        run: |
+          # Start Kafka Connect with test image
+          docker compose --env-file .env up -d kafka-connect
+
+          # Wait for Connect to start
+          timeout 120 bash -c \
+            'until curl -f http://localhost:8083/; do sleep 5; done'
+
+      - name: Validate connector plugins
+        run: |
+          # Check if required plugins are installed
+          curl -s http://localhost:8083/connector-plugins | \
+            jq '.[] | select(.class | contains("PostgresConnector"))'
+          curl -s http://localhost:8083/connector-plugins | \
+            jq '.[] | select(.class | contains("S3SinkConnector"))'
+
+      - name: Test connector configuration validation
+        run: |
+          # Test Postgres source connector config validation
+          POSTGRES_URL="http://localhost:8083/connector-plugins"
+          POSTGRES_URL="${POSTGRES_URL}/io.debezium.connector.postgresql"
+          POSTGRES_URL="${POSTGRES_URL}.PostgresConnector/config/validate"
+          curl -X PUT "${POSTGRES_URL}" \
+            -H "Content-Type: application/json" \
+            -d @kafka/connectors/postgres-source.json | jq '.error_count'
+
+          # Test S3 sink connector config validation
+          S3_URL="http://localhost:8083/connector-plugins"
+          S3_URL="${S3_URL}/io.confluent.connect.s3"
+          S3_URL="${S3_URL}.S3SinkConnector/config/validate"
+          curl -X PUT "${S3_URL}" \
+            -H "Content-Type: application/json" \
+            -d @kafka/connectors/s3-sink.json | jq '.error_count'
+
+      - name: Cleanup test environment
+        if: always()
+        run: |
+          docker compose --env-file .env down -v
+          docker system prune -f

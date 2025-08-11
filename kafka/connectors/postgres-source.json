@@ -1,5 +1,5 @@
 {
-  "name": "postgres-source-connector",
+  "name": "postgres-source",
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
     "database.hostname": "postgres",
@@ -8,16 +8,22 @@
     "database.password": "dbz",
     "database.dbname": "wideworldimporters",
     "database.server.name": "wideworldimporters",
-    "table.include.list": "application.*,purchasing.*,sales.*,warehouse.*",
+    "table.include.list": "application.cities,application.state_provinces,application.countries,application.people,sales.invoices,sales.invoice_line,sales.customers,sales.buying_groups,sales.customer_categories,warehouse.stock_items,warehouse.colors,warehouse.package_types",
     "plugin.name": "pgoutput",
     "publication.name": "dbz_publication",
     "slot.name": "debezium_slot",
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
-    "value.converter.schema.registry.url": "http://schema-registry:8061",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
     "topic.prefix": "cdc",
     "schema.history.internal.kafka.bootstrap.servers": "broker:29092",
     "schema.history.internal.kafka.topic": "schema-changes.wideworldimporters",
-    "snapshot.mode": "initial"
+    "snapshot.mode": "initial",
+    
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.partitions": "6",
+    "topic.creation.default.cleanup.policy": "delete",
+    "topic.creation.default.compression.type": "snappy",
+    "topic.creation.default.retention.ms": "604800000"
   }
 }

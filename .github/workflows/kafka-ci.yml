@@ -164,15 +164,7 @@ jobs:
 
       - name: Create test environment file
         run: |
-          cat > .env.test << EOF
-          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-          POSTGRES_PORT=${{ secrets.POSTGRES_PORT }}
-          MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}
-          MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}
-          KAFKA_BOOTSTRAP_SERVERS=${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
-          EOF
+          copy .env.example .env
 
       - name: Start test services
         run: |
@@ -182,7 +174,8 @@ jobs:
             docker-compose.yml
 
           # Start minimal services for testing
-          docker compose --env-file .env.test up -d broker schema-registry minio
+          docker compose --env-file .env up -d postgres broker \
+            schema-registry minio
 
           # Wait for services to be ready
           sleep 30
@@ -190,7 +183,7 @@ jobs:
       - name: Test Kafka Connect image
         run: |
           # Start Kafka Connect with test image
-          docker compose --env-file .env.test up -d kafka-connect
+          docker compose --env-file .env up -d kafka-connect
 
           # Wait for Connect to start
           timeout 120 bash -c \
@@ -225,5 +218,5 @@ jobs:
       - name: Cleanup test environment
         if: always()
         run: |
-          docker compose --env-file .env.test down -v
+          docker compose --env-file .env down -v
           docker system prune -f

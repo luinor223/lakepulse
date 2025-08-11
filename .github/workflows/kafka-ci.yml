@@ -37,6 +37,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up .env file
+        run: cp .env.example .env
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:

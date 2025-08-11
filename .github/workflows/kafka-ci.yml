@@ -156,7 +156,8 @@ jobs:
         run: |
           # Update docker-compose to use test image (use first tag only)
           IMAGE_TAG=$(echo "${{ needs.build.outputs.image-tag }}" | head -n1)
-          sed -i "s|lakepulse/kafka-connect:latest|${IMAGE_TAG}|" docker-compose.yml
+          sed -i "s|lakepulse/kafka-connect:latest|${IMAGE_TAG}|" \
+           docker-compose.yml
 
           # Start minimal services for testing
           docker compose --env-file .env up -d postgres broker \

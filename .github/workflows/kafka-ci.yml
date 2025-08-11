@@ -150,7 +150,7 @@ jobs:
 
       - name: Create test environment file
         run: |
-          copy .env.example .env
+          cp .env.example .env
 
       - name: Start test services
         run: |
